@@ -1,0 +1,59 @@
+[data]
+multi_task = ['yelp', 'dbpedia', 'agnews', 'amazon', 'yahoo']
+yelp_path = "./data/yelp"
+yelp_dataset_name = "yelp_review_full"
+yelp_describe = "text"
+yelp_column_name = ['text']
+yelp_num_class = 5
+dbpedia_path = "./data/dbpedia"
+dbpedia_dataset_name = "dbpedia_14"
+dbpedia_describe = "content"
+dbpedia_column_name = ['title', 'content']
+dbpedia_num_class = 14
+agnews_path = "./data/agnews"
+agnews_dataset_name = "ag_news"
+agnews_describe = "text"
+agnews_column_name = ['text']
+agnews_num_class = 4
+amazon_path = "./data/amazon"
+amazon_dataset_name = "amazon_polarity"
+amazon_describe = "content"
+amazon_column_name = ['title', 'content']
+amazon_num_class = 2
+yahoo_path = "./data/yahoo"
+yahoo_dataset_name = "yahoo_answers_topics"
+yahoo_describe = "best_answer"
+yahoo_column_name = ['id', 'question_title', 'question_content', 'best_answer']
+yahoo_num_class = 10
+
+[io]
+ckpt_dir = "./ckpts/seed_{{seed}}"
+log = "./ckpts/seed_{{seed}}/log"
+last_model = "./ckpts/seed_{{seed}}/last.pt"
+best_model = "./ckpts/seed_{{seed}}/best.pt"
+
+[model]
+model_name = "bert-base-uncased"
+cache_dir = "./ckpts/models"
+hidden_dim = 768
+max_len = 128
+
+[prefix]
+peft_type = 'prefix'
+prefix_num  = 20
+distill_loss = "hard"
+
+[trainer]
+max_epochs = 20
+start_epoch = 0
+batch_size = 128
+num_workers = 2
+is_resume = false
+
+[optim]
+lr = 1e-2
+
+[mask]
+remove_ratio = 0.02
+
+
