@@ -68,13 +68,7 @@ def run_teacher_student_learning(config, device, model, teacher_model,
             )
         train_acc = metric.compute()['accuracy']
 
-        torch.save({
-            'epoch': epoch,
-            'model': model.state_dict(),
-            'best': (best_acc, best_epoch),
-            'optim': optimizer.state_dict(),
-            'sched': scheduler.state_dict()
-        }, config["io"]["ckpt_dir"]+"/last_teacher.pt")
+        model.save_pretrained(config['io']['last_prefix_model'])
 
         model.eval()
         for step, batch in enumerate(tqdm(test_loader)):
@@ -94,7 +88,7 @@ def run_teacher_student_learning(config, device, model, teacher_model,
 
         if acc > best_acc:
             best_acc, best_epoch = acc, epoch
-            os.system(f'cp {config["io"]["ckpt_dir"]+ "/last_teacher.pt"} {config["io"]["ckpt_dir"] + "/best_teacher.pt"}')
+            os.system(f'cp -r {config["io"]["last_prefix_model"]} {config["io"]["best_prefix_model"]}')
 
 
 def run_normal_training(config, device, model,

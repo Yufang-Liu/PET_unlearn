@@ -31,6 +31,8 @@ ckpt_dir = "./ckpts/seed_{{seed}}"
 log = "./ckpts/seed_{{seed}}/log"
 last_model = "./ckpts/seed_{{seed}}/last.pt"
 best_model = "./ckpts/seed_{{seed}}/best.pt"
+last_prefix_model = "./ckpts/seed_{{seed}}/prefix_last"
+best_prefix_model = "./ckpts/seed_{{seed}}/prefix_best"
 
 [model]
 model_name = "bert-base-uncased"
