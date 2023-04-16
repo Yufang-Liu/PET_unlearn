@@ -19,6 +19,12 @@ def parse_argument():
                         default=666)
     parser.add_argument('--device', type=str, default="cuda",
                         help="cpu or cuda")
+    parser.add_argument('--add_prefix', action="store_true", default=False,
+                        help="use pretrained prefix")
+    parser.add_argument('--prefix_dir', type=str, default=None,
+                        help="pretrained prefix directory")
+    parser.add_argument('--test_only', action="store_true", default=False,
+                        help="whether to only test")
     parser.add_argument("-t", "--toml", type=str, action="append")
     options = parser.parse_args()
     return options
@@ -61,10 +67,28 @@ def main():
     print(len(train_loader), len(test_loader))
 
     model = MultiTaskClassifier(config)
-    # multi_task_train(config, model, train_loader, test_loader, num_epochs=5)
+
+    if config['options']['add_prefix']:
+        model.add_prefix()
 
     num_epochs, device = config['trainer']['max_epochs'], config['options']['device']
     metric = evaluate.load("accuracy")
+
+    if config['options']['test_only']:
+        model.eval()
+        for step, batch in enumerate(tqdm(test_loader)):
+            batch.to(device)
+            with torch.no_grad():
+                predictions, references = model(batch, train=False)
+
+            metric.add_batch(
+                predictions=predictions,
+                references=references,
+            )
+
+        eval_metric = metric.compute()
+        print("test finish, test acc is {}".format(eval_metric['accuracy']))
+        exit(0)
 
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
 

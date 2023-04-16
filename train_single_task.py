@@ -16,6 +16,8 @@ from peft import (
     get_peft_model_state_dict,
     set_peft_model_state_dict,
     PeftType,
+    PeftModel,
+    PeftConfig,
     PrefixTuningConfig,
     PromptEncoderConfig,
 )
@@ -146,6 +148,8 @@ def parse_argument():
                         default=666)
     parser.add_argument('--add_prefix', action="store_true", default=False,
                         help="use prefix for learning")
+    parser.add_argument('--prefix_dir', type=str, default=None,
+                        help="use pretrained prefix")
     parser.add_argument('--fix_classifier', action='store_true', default=False,
                         help="whether to freeze the task classifier or not")
     parser.add_argument('--load_from_pretrained', type=str, default=None,
@@ -156,6 +160,8 @@ def parse_argument():
                         help="dataset name in [yelp, dbpedia, amazon, agnews, yahoo]")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
+    parser.add_argument('--test_only', action="store_true", default=False,
+                        help="whether to only test")
     parser.add_argument("-t", "--toml", type=str, action="append")
     options = parser.parse_args()
     return options
@@ -202,21 +208,24 @@ def main():
 
     if config['options']['add_prefix']:
         print("---------add prefix-----------")
-        peft_config = None
-        if config['prefix']['peft_type'] == 'prefix':
-            peft_config = PrefixTuningConfig(
-                task_type="SEQ_CLS",
-                num_virtual_tokens=config['prefix']['prefix_num'])
+        if not config['options']['prefix_dir']:
+            peft_config = None
+            if config['prefix']['peft_type'] == 'prefix':
+                peft_config = PrefixTuningConfig(
+                    task_type="SEQ_CLS",
+                    num_virtual_tokens=config['prefix']['prefix_num'])
+            else:
+                print("error peft type !")
+                exit(0)
+            model = get_peft_model(model, peft_config)
+            if config['options']['fix_classifier']:
+                for n, p in model.named_parameters():
+                    if 'classifier' in n:
+                        p.requires_grad = False
+            model.print_trainable_parameters()
+            print(model)
         else:
-            print("error peft type !")
-            exit(0)
-        model = get_peft_model(model, peft_config)
-        if config['options']['fix_classifier']:
-            for n, p in model.named_parameters():
-                if 'classifier' in n:
-                    p.requires_grad = False
-        model.print_trainable_parameters()
-        print(model)
+            model = PeftModel.from_pretrained(model, config['options']['prefix_dir'])
 
     tokenizer = AutoTokenizer.from_pretrained(config['model']['model_name'],
                                               cache_dir=config['model']['cache_dir'])
@@ -226,6 +235,24 @@ def main():
     train_loader, test_loader = get_dataset(dataset_str, config, tokenizer)
     num_epochs, device = config['trainer']['max_epochs'], config['options']['device']
     metric = evaluate.load("accuracy")
+
+    if config['options']['test_only']:
+        model.eval()
+        model.to(device)
+        for step, batch in enumerate(tqdm(test_loader)):
+            batch.to(device)
+            with torch.no_grad():
+                outputs = model(**batch)
+            predictions = outputs.logits.argmax(dim=-1)
+            predictions, references = predictions, batch["labels"]
+            metric.add_batch(
+                predictions=predictions,
+                references=references,
+            )
+
+        eval_metric = metric.compute()
+        print("test finish, test acc is {}".format(eval_metric['accuracy']))
+        exit(0)
 
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
 

@@ -4,6 +4,10 @@ import torch
 import torch.nn as nn
 from transformers import BertModel
 import torch.nn.functional as F
+from peft import (
+    PeftModel,
+    PeftConfig
+)
 
 
 class MultiTaskClassifier(torch.nn.Module):
@@ -19,6 +23,11 @@ class MultiTaskClassifier(torch.nn.Module):
                                 device=config['options']['device'])
             )
         self.config = config
+
+    def add_prefix(self):
+        self.model = PeftModel.from_pretrained(
+            self.model,
+            self.config['options']['prefix_dir'])
 
     def forward(self, batch, train=True):
         task_id = batch['task_id']
