@@ -11,15 +11,9 @@ import torch.nn.functional as F
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
 import evaluate
 from peft import (
-    get_peft_config,
     get_peft_model,
-    get_peft_model_state_dict,
-    set_peft_model_state_dict,
-    PeftType,
     PeftModel,
-    PeftConfig,
     PrefixTuningConfig,
-    PromptEncoderConfig,
 )
 
 
@@ -275,8 +269,6 @@ def main():
         run_teacher_student_learning(config, device, model, teacher_model,
                                      train_loader, test_loader, metric,
                                      optimizer, scheduler, num_epochs)
-
-
 
 
 if __name__ == '__main__':

@@ -1,6 +1,5 @@
 from torch.utils.data import DataLoader, sampler, Subset, ConcatDataset
-from datasets import load_dataset
-import random
+from datasets import load_dataset, load_from_disk
 
 
 def get_dataset(dataset_str, config, tokenizer):
@@ -19,8 +18,24 @@ def get_dataset(dataset_str, config, tokenizer):
     def collate_fn(examples):
         return tokenizer.pad(examples, padding="longest", return_tensors="pt")
 
-    datasets = load_dataset(dataset_name, cache_dir=dataset_path)
-    tokenized_datasets = datasets.map(
+    if not config['options']['sample_small']:
+        train_set = load_dataset(dataset_name, cache_dir=dataset_path,
+                                 split='train')
+        test_set = load_dataset(dataset_name, cache_dir=dataset_path,
+                                split='test')
+    else:
+        dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
+        train_set, test_set = dataset['train'], dataset['test']
+        print(len(train_set), len(test_set))
+
+
+    train_tokenized_datasets = train_set.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=dataset_column,
+    )
+
+    test_tokenized_datasets = test_set.map(
         tokenize_function,
         batched=True,
         remove_columns=dataset_column,
@@ -28,37 +43,21 @@ def get_dataset(dataset_str, config, tokenizer):
 
     # We also rename the 'label' column to 'labels' which is the expected name for labels
     # by the models of the transformers library
-    tokenized_datasets = tokenized_datasets.rename_column("label", "labels") \
+    train_tokenized_datasets = train_tokenized_datasets.rename_column("label", "labels") \
         if dataset_str != 'yahoo' \
-        else tokenized_datasets.rename_column("topic", "labels")
+        else train_tokenized_datasets.rename_column("topic", "labels")
 
-    if config['options']['sample_small']:
-        n_train = len(tokenized_datasets["train"])
-        train_split = n_train // 10
-        train_indices = list(range(n_train))
-        random.shuffle(train_indices)
-        train_sampler = sampler.SubsetRandomSampler(train_indices[:train_split])
+    test_tokenized_datasets = test_tokenized_datasets.rename_column("label", "labels") \
+        if dataset_str != 'yahoo' \
+        else test_tokenized_datasets.rename_column("topic", "labels")
 
-        n_test = len(tokenized_datasets["test"])
-        test_split = n_test // 10
-        test_indices = list(range(n_test))
-        random.shuffle(test_indices)
-        test_sampler = sampler.SubsetRandomSampler(test_indices[:test_split])
-
-        train_dataloader = DataLoader(tokenized_datasets["train"], collate_fn=collate_fn,
-                                      batch_size=batch_size, sampler=train_sampler)
-        eval_dataloader = DataLoader(
-            tokenized_datasets["test"], collate_fn=collate_fn, batch_size=batch_size,
-            sampler=test_sampler
-        )
-        print("load samll dataset, number of batch: {}".format(len(train_dataloader)))
-    else:
-        train_dataloader = DataLoader(tokenized_datasets["train"], shuffle=True, collate_fn=collate_fn,
-                                      batch_size=batch_size)
-        eval_dataloader = DataLoader(
-            tokenized_datasets["test"], shuffle=False, collate_fn=collate_fn, batch_size=batch_size
-        )
-        print("load full dataset, number of batch: {}".format(len(train_dataloader)))
+    train_dataloader = DataLoader(train_tokenized_datasets, shuffle=True, collate_fn=collate_fn,
+                                  batch_size=batch_size)
+    eval_dataloader = DataLoader(
+        test_tokenized_datasets, shuffle=False, collate_fn=collate_fn, batch_size=batch_size
+    )
+    print("load {} dataset, number of batch: {}".
+          format("small" if config['options']['sample_small'] else "full", len(train_dataloader)))
     return train_dataloader, eval_dataloader
 
 
@@ -81,12 +80,14 @@ def get_all_dataset(config, tokenizer):
         dataset_describe = config['data'][dataset_str + '_describe']
         dataset_column = config['data'][dataset_str + '_column_name']
 
-        # datasets = load_dataset(dataset_name, cache_dir=dataset_path)
-        # train_set, test_set = datasets['train'], datasets['test']
-        train_set = load_dataset(dataset_name, cache_dir=dataset_path,
-                                 split='train[:10%]')
-        test_set = load_dataset(dataset_name, cache_dir=dataset_path,
-                                split='test[:10%]')
+        if not config['options']['sample_small']:
+            train_set = load_dataset(dataset_name, cache_dir=dataset_path,
+                                     split='train')
+            test_set = load_dataset(dataset_name, cache_dir=dataset_path,
+                                    split='test')
+        else:
+            dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
+            train_set, test_set = dataset['train'], dataset['test']
 
         train_set = train_set.add_column(name="task_id", column=[task_id]*len(train_set))
         test_set = test_set.add_column(name="task_id", column=[task_id]*len(test_set))
@@ -101,7 +102,6 @@ def get_all_dataset(config, tokenizer):
             batched=True,
             remove_columns=dataset_column,
         )
-
 
         # We also rename the 'label' column to 'labels' which is the expected name for labels
         # by the models of the transformers library
@@ -124,5 +124,7 @@ def get_all_dataset(config, tokenizer):
     eval_dataloader = DataLoader(
         full_testset, shuffle=False, collate_fn=collate_fn, batch_size=batch_size
     )
+    print("load {} dataset, number of batch: {}".
+          format("small" if config['options']['sample_small'] else "full", len(train_dataloader)))
     return train_dataloader, eval_dataloader
 
