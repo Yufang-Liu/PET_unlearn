@@ -17,7 +17,7 @@ def get_indices(dataset, num_class, label_name, sample_size):
         if len(indices[target_label]) < sample_size:
             indices[target_label].append(idx)
             cnt += 1
-            print(cnt)
+            # print(cnt)
     all_indices = []
     for k, v in indices.items():
         all_indices.extend(v)

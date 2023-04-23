@@ -10,7 +10,7 @@ class MultiTaskClassifier(torch.nn.Module):
         self.model = BertModel.from_pretrained(config['model']['model_name']).cuda()
         self.dropout = nn.Dropout(self.model.config.hidden_dropout_prob)
         dataset_str_list = config['data']['multi_task']
-        self.classifier_list = []
+        self.classifier_list = nn.ModuleList([])
         for dataset_str in dataset_str_list:
             self.classifier_list.append(
                 torch.nn.Linear(config['model']['hidden_dim'],

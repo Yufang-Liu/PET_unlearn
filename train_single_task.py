@@ -209,7 +209,7 @@ def main():
                     task_type="SEQ_CLS",
                     num_virtual_tokens=config['prefix']['prefix_num'])
             else:
-                print("error peft type !")
+                print("error local_peft type !")
                 exit(0)
             model = get_peft_model(model, peft_config)
             if config['options']['fix_classifier']:

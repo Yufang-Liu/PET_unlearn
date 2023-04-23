@@ -7,26 +7,14 @@ import torch, evaluate
 
 from transformers import AutoTokenizer, AdamW, get_linear_schedule_with_warmup
 from model.multi_task_classfier import MultiTaskClassifier
+from model.modified_bert import BertForMultiTaskClassification
+from transformers import BertConfig
 from utils import load_config, set_seed, update
 from dataset.get_dataset import get_all_dataset, get_dataset
-from peft import PeftModel, PrefixTuningConfig, get_peft_model
-
-
-def test(model, test_loader, device, metric):
-    model.to(device)
-    model.eval()
-    for step, batch in enumerate(tqdm(test_loader)):
-        batch.to(device)
-        with torch.no_grad():
-            outputs = model(**batch)
-        predictions = outputs.logits.argmax(dim=-1)
-        predictions, references = predictions, batch["labels"]
-        metric.add_batch(
-            predictions=predictions,
-            references=references,
-        )
-    eval_metric = metric.compute()
-    return eval_metric['accuracy']
+# from peft import PeftModel, PrefixTuningConfig, get_peft_model
+from local_peft.peft_model import PeftModel
+from local_peft.tuners.prefix_tuning import PrefixTuningConfig
+from local_peft.mapping import get_peft_model
 
 
 def parse_argument():
@@ -45,6 +33,8 @@ def parse_argument():
                         help="pretrained prefix directory")
     parser.add_argument('--load_from_pretrained', type=str, default=None,
                         help="pretrained model file path")
+    parser.add_argument('--fix_classifier', action='store_true', default=False,
+                        help="whether to freeze the task classifier or not")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
     parser.add_argument('--finetune', action="store_true", default=False,
@@ -88,89 +78,83 @@ def main():
     if getattr(tokenizer, "pad_token_id") is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    model = MultiTaskClassifier(config)
+    model = BertForMultiTaskClassification.from_pretrained("bert-base-uncased", config)
 
     num_epochs, device = config['trainer']['max_epochs'], config['options']['device']
     metric = evaluate.load("accuracy")
 
     if config['options']['load_from_pretrained']:
-        ckpt = torch.load(config['options']['load_from_pretrained'])
-        model.load_state_dict(ckpt['model'])
+        ckpt = torch.load(config['options']['load_from_pretrained'])['model']
+        model.load_state_dict(ckpt)
         print("load from fine-tuned model, path is {}".
               format(config['options']['load_from_pretrained']))
 
-    if config['options']['add_prefix'] and config['options']['test_only']:
-        origin_acc, new_acc = {}, {}
-        idx = config['data']['multi_task'].index(config['options']['unlearn_dataset_name'])
-        seq_cls_model = model.get_prefix_seq_cls_model(idx)
-        train_loader, test_loader = get_dataset(config['options']['unlearn_dataset_name'],
-                                                config, tokenizer)
+    if config['options']['add_prefix']:
+        print("---------add prefix-----------")
+        peft_config = None
+        if config['prefix']['peft_type'] == 'prefix':
+            peft_config = PrefixTuningConfig(
+                task_type="SEQ_MT_CLS",
+                num_virtual_tokens=config['prefix']['prefix_num'])
+        else:
+            print("error local_peft type !")
+            exit(0)
+        model = get_peft_model(model, peft_config, config)
 
-        origin_acc[config['options']['unlearn_dataset_name']] = \
-            test(seq_cls_model, test_loader, device, metric)
+        if config['options']['prefix_dir']:
+            adapter_model = torch.load(config['options']['prefix_dir'] + '/adapter_model.bin')
+            state_dict = model.state_dict()
+            state_dict['prompt_encoder.embedding.weight'] = adapter_model['prompt_embeddings']
+            model.load_state_dict(state_dict)
+        if config['options']['finetune']:
+            for n, p in model.named_parameters():
+                if "prompt_encoder" not in n:
+                    p.requires_grad = True
+                else:
+                    p.requires_grad = False
+        model.print_trainable_parameters()
+        print(model)
 
-        seq_cls_model = PeftModel.from_pretrained(
-            seq_cls_model,
-            config['options']['prefix_dir'])
+    model.to(device)
 
-        acc = test(seq_cls_model, test_loader, device, metric)
-        new_acc[config['options']['unlearn_dataset_name']] = acc
-        print("{} test finish, test acc is {}".format(config['options']['unlearn_dataset_name'],
-                                                      acc))
-
-        print("begin test other datasets")
+    if config['options']['test_only']:
+        model.eval()
+        if config['options']['prefix_dir'] and config['options']['unlearn_dataset_name']:
+            print("begin test other datasets after unlearn {}".
+                  format(config['options']['unlearn_dataset_name']))
+        else:
+            print("begin test other datasets")
         for test_idx, dataset_str in enumerate(config['data']['multi_task']):
-            if test_idx != idx:
-                seq_cls_model = model.get_prefix_seq_cls_model(test_idx)
-                train_loader, test_loader = get_dataset(dataset_str,
-                                                        config, tokenizer)
-                origin_acc[dataset_str] = test(seq_cls_model, test_loader, device, metric)
+            print("test for task {} {}".format(test_idx, dataset_str))
+            _, task_test_loader = get_dataset(dataset_str, config,
+                                              tokenizer, add_task_id=True)
+            for step, batch in enumerate(tqdm(task_test_loader)):
+                batch.to(device)
+                with torch.no_grad():
+                    predictions, references = model(**batch)[1:]
 
-                peft_config = None
-                if config['prefix']['peft_type'] == 'prefix':
-                    peft_config = PrefixTuningConfig(
-                        task_type="SEQ_CLS",
-                        num_virtual_tokens=config['prefix']['prefix_num'])
-                seq_cls_model = get_peft_model(seq_cls_model, peft_config)
-                state_dict = seq_cls_model.state_dict()
-                prefix_state_dict = torch.load(config['options']['prefix_dir'] + '/adapter_model.bin')
-                state_dict['prompt_encoder.embedding.weight'] = prefix_state_dict['prompt_embeddings']
-                seq_cls_model.load_state_dict(state_dict)
+                metric.add_batch(
+                    predictions=predictions,
+                    references=references,
+                )
 
-                acc = test(seq_cls_model, test_loader, device, metric)
-                new_acc[dataset_str] = acc
-                print("{} test finish, test acc is {}".format(dataset_str,
-                                                              acc))
-
-        print("test finish ! original acc:")
-        for k, v in origin_acc.items():
-            print(k, v)
-        print("after unlearn {}, new acc:".format(config['options']['unlearn_dataset_name']))
-        for k, v in new_acc.items():
-            print(k, v)
-
+            eval_metric = metric.compute()
+            print("{} test finish, test acc is {}".format(dataset_str, eval_metric['accuracy']))
         exit(0)
+
+    if config['options']['fix_classifier']:
+        for n, p in model.named_parameters():
+            if "classifier_list" in n:
+                p.requires_grad = False
+        if config['options']['add_prefix']:
+            print("fix classifier !")
+            print(model.print_trainable_parameters())
+        else:
+            for n, p in model.named_parameters():
+                print(n, p.requires_grad)
 
     train_loader, test_loader = get_all_dataset(config, tokenizer)
-
     print(len(train_loader), len(test_loader))
-
-    if not config['options']['add_prefix'] and config['options']['test_only']:
-        model.eval()
-        for step, batch in enumerate(tqdm(test_loader)):
-            batch.to(device)
-            with torch.no_grad():
-                predictions, references = model(batch, train=False)
-            metric.add_batch(
-                predictions=predictions,
-                references=references,
-            )
-        eval_metric = metric.compute()
-        print("test finish, test acc is {}".format(eval_metric['accuracy']))
-        exit(0)
-    elif config['options']['add_prefix'] and not config['options']['test_only']:
-        pass
-
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
 
     # Instantiate scheduler
@@ -180,13 +164,12 @@ def main():
         num_training_steps=(len(train_loader) * num_epochs),
     )
 
-    model.to(device)
     best_metric, best_epoch = 0, 0
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(tqdm(train_loader)):
             batch.to(device)
-            loss = model(batch)
+            loss = model(**batch)[0].loss
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -204,7 +187,7 @@ def main():
         for step, batch in enumerate(tqdm(test_loader)):
             batch.to(device)
             with torch.no_grad():
-                predictions, references = model(batch, train=False)
+                predictions, references = model(**batch)[1:]
 
             metric.add_batch(
                 predictions=predictions,

@@ -1,8 +1,9 @@
 from torch.utils.data import DataLoader, sampler, Subset, ConcatDataset
 from datasets import load_dataset, load_from_disk
+from split_dataset import get_indices
 
 
-def get_dataset(dataset_str, config, tokenizer):
+def get_dataset(dataset_str, config, tokenizer, add_task_id=False):
     dataset_path = config['data'][dataset_str + '_path']
     dataset_name = config['data'][dataset_str + '_dataset_name']
     dataset_describe = config['data'][dataset_str + '_describe']
@@ -27,6 +28,11 @@ def get_dataset(dataset_str, config, tokenizer):
         dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
         train_set, test_set = dataset['train'], dataset['test']
         print(len(train_set), len(test_set))
+
+    if add_task_id:
+        task_id = config['data']['multi_task'].index(dataset_str)
+        train_set = train_set.add_column(name="task_id", column=[task_id] * len(train_set))
+        test_set = test_set.add_column(name="task_id", column=[task_id] * len(test_set))
 
 
     train_tokenized_datasets = train_set.map(
@@ -88,6 +94,16 @@ def get_all_dataset(config, tokenizer):
         else:
             dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
             train_set, test_set = dataset['train'], dataset['test']
+            if config['options']['finetune']:
+                if dataset_str == config['options']['unlearn_dataset_name']:
+                    continue
+                label_name = 'label' if dataset_str != 'yahoo' else "topic"
+                train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],
+                                            label_name, 10)
+                test_indices = get_indices(test_set, config['data'][dataset_str + '_num_class'],
+                                           label_name, 10)
+                train_set = train_set.select(train_indices)
+                test_set = test_set.select(test_indices)
 
         train_set = train_set.add_column(name="task_id", column=[task_id]*len(train_set))
         test_set = test_set.add_column(name="task_id", column=[task_id]*len(test_set))
