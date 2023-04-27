@@ -39,6 +39,8 @@ def parse_argument():
                         help="whether to sample small dataset or not")
     parser.add_argument('--finetune', action="store_true", default=False,
                         help="whether to use finetune set, sample 10 number for each class")
+    parser.add_argument('--finetune_nums', type=int, default=10,
+                        help="number of each class")
     parser.add_argument('--test_only', action="store_true", default=False,
                         help="whether to only test")
     parser.add_argument("-t", "--toml", type=str, action="append")
@@ -85,7 +87,13 @@ def main():
 
     if config['options']['load_from_pretrained']:
         ckpt = torch.load(config['options']['load_from_pretrained'])['model']
-        model.load_state_dict(ckpt)
+        if 'finetune' in config['options']['load_from_pretrained']:
+            state_dict = model.state_dict()
+            for k1, k2 in zip(state_dict.keys(), ckpt.keys()):
+                state_dict[k1] = ckpt[k2]
+            model.load_state_dict(state_dict)
+        else:
+            model.load_state_dict(ckpt)
         print("load from fine-tuned model, path is {}".
               format(config['options']['load_from_pretrained']))
 
@@ -148,7 +156,7 @@ def main():
                 p.requires_grad = False
         if config['options']['add_prefix']:
             print("fix classifier !")
-            print(model.print_trainable_parameters())
+            model.print_trainable_parameters()
         else:
             for n, p in model.named_parameters():
                 print(n, p.requires_grad)

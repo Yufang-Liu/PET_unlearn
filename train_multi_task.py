@@ -89,6 +89,10 @@ def main():
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     model = MultiTaskClassifier(config)
+    for n, p in model.named_parameters():
+        if "classifier_list" in n:
+            p.requires_grad = False
+        print(n, p.requires_grad)
 
     num_epochs, device = config['trainer']['max_epochs'], config['options']['device']
     metric = evaluate.load("accuracy")
