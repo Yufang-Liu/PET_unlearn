@@ -99,9 +99,9 @@ def get_all_dataset(config, tokenizer):
                     continue
                 label_name = 'label' if dataset_str != 'yahoo' else "topic"
                 train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],
-                                            label_name, 10)
+                                            label_name, config['options']['finetune_nums'])
                 test_indices = get_indices(test_set, config['data'][dataset_str + '_num_class'],
-                                           label_name, 10)
+                                           label_name, config['options']['finetune_nums'])
                 train_set = train_set.select(train_indices)
                 test_set = test_set.select(test_indices)
 
