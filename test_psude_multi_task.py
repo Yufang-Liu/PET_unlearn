@@ -35,6 +35,8 @@ def parse_argument():
                         help="pretrained model file path")
     parser.add_argument('--fix_classifier', action='store_true', default=False,
                         help="whether to freeze the task classifier or not")
+    parser.add_argument('--fix_prefix', action='store_true', default=False,
+                        help="whether to freeze the prefix")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
     parser.add_argument('--finetune', action="store_true", default=False,
@@ -87,11 +89,22 @@ def main():
 
     if config['options']['load_from_pretrained']:
         ckpt = torch.load(config['options']['load_from_pretrained'])['model']
-        if 'finetune' in config['options']['load_from_pretrained']:
-            state_dict = model.state_dict()
-            for k1, k2 in zip(state_dict.keys(), ckpt.keys()):
-                state_dict[k1] = ckpt[k2]
-            model.load_state_dict(state_dict)
+        if list(ckpt.keys())[0].startswith('base_model'):
+            print("----load model with prefix----")
+            peft_config = None
+            if config['prefix']['peft_type'] == 'prefix':
+                peft_config = PrefixTuningConfig(
+                    task_type="SEQ_MT_CLS",
+                    num_virtual_tokens=config['prefix']['prefix_num'])
+            else:
+                print("error local_peft type !")
+                exit(0)
+            model = get_peft_model(model, peft_config, config)
+            new_ckpt = model.state_dict()
+            for k1, k2 in zip(new_ckpt.keys(), ckpt.keys()):
+                assert k1 == k2
+                new_ckpt[k1] = ckpt[k2]
+            model.load_state_dict(new_ckpt)
         else:
             model.load_state_dict(ckpt)
         print("load from fine-tuned model, path is {}".
@@ -116,12 +129,17 @@ def main():
             model.load_state_dict(state_dict)
         if config['options']['finetune']:
             for n, p in model.named_parameters():
-                if "prompt_encoder" not in n:
+                if "prompt_encoder" not in n and "classifier" not in n:
                     p.requires_grad = True
-                else:
+        if config['options']['fix_prefix']:
+            for n, p in model.named_parameters():
+                if "prompt_encoder" in n:
                     p.requires_grad = False
-        model.print_trainable_parameters()
-        print(model)
+
+    if config['options']['fix_classifier']:
+        for n, p in model.named_parameters():
+            if "classifier_list" in n:
+                p.requires_grad = False
 
     model.to(device)
 
@@ -150,16 +168,13 @@ def main():
             print("{} test finish, test acc is {}".format(dataset_str, eval_metric['accuracy']))
         exit(0)
 
-    if config['options']['fix_classifier']:
+    if config['options']['add_prefix']:
+        print("fix classifier !")
+        model.print_trainable_parameters()
+        print(model)
+    else:
         for n, p in model.named_parameters():
-            if "classifier_list" in n:
-                p.requires_grad = False
-        if config['options']['add_prefix']:
-            print("fix classifier !")
-            model.print_trainable_parameters()
-        else:
-            for n, p in model.named_parameters():
-                print(n, p.requires_grad)
+            print(n, p.requires_grad)
 
     train_loader, test_loader = get_all_dataset(config, tokenizer)
     print(len(train_loader), len(test_loader))
@@ -211,6 +226,29 @@ def main():
 
     print("training finish, save models in {}, best metric is {} in epoch {}."
           .format(config['io']['best_model'], best_metric, best_epoch))
+
+
+    model.eval()
+    if config['options']['prefix_dir'] and config['options']['unlearn_dataset_name']:
+        print("begin test other datasets after unlearn {}".
+              format(config['options']['unlearn_dataset_name']))
+    else:
+        print("begin test other datasets")
+
+    for test_idx, dataset_str in enumerate(config['data']['multi_task']):
+        print("test for task {} {}".format(test_idx, dataset_str))
+        _, task_test_loader = get_dataset(dataset_str, config,
+                                          tokenizer, add_task_id=True)
+        for step, batch in enumerate(tqdm(task_test_loader)):
+            batch.to(device)
+            with torch.no_grad():
+                predictions, references = model(**batch)[1:]
+            metric.add_batch(
+                predictions=predictions,
+                references=references,
+            )
+        eval_metric = metric.compute()
+        print("{} test finish, test acc is {}".format(dataset_str, eval_metric['accuracy']))
 
 
 if __name__ == '__main__':

@@ -132,15 +132,18 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         from .mapping import MODEL_TYPE_TO_PEFT_MODEL_MAPPING, PEFT_TYPE_TO_CONFIG_MAPPING
 
         # load the config
-        config = PEFT_TYPE_TO_CONFIG_MAPPING[PeftConfig.from_pretrained(model_id).peft_type].from_pretrained(model_id)
+        peft_config = PEFT_TYPE_TO_CONFIG_MAPPING[PeftConfig.from_pretrained(model_id).peft_type].from_pretrained(model_id)
 
         if getattr(model, "hf_device_map", None) is not None:
             remove_hook_from_submodules(model)
 
-        if config.task_type not in MODEL_TYPE_TO_PEFT_MODEL_MAPPING.keys():
-            model = cls(model, config)
+        if peft_config.task_type not in MODEL_TYPE_TO_PEFT_MODEL_MAPPING.keys():
+            model = cls(model, peft_config)
         else:
-            model = MODEL_TYPE_TO_PEFT_MODEL_MAPPING[config.task_type](model, config)
+            if peft_config.task_type == "SEQ_MT_CLS":
+                model = MODEL_TYPE_TO_PEFT_MODEL_MAPPING[peft_config.task_type](model, peft_config, kwargs['config'])
+            else:
+                model = MODEL_TYPE_TO_PEFT_MODEL_MAPPING[peft_config.task_type](model, peft_config)
 
         # load weights if any
         if os.path.exists(os.path.join(model_id, WEIGHTS_NAME)):
