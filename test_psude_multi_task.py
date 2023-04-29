@@ -169,7 +169,6 @@ def main():
         exit(0)
 
     if config['options']['add_prefix']:
-        print("fix classifier !")
         model.print_trainable_parameters()
         print(model)
     else:
@@ -177,6 +176,7 @@ def main():
             print(n, p.requires_grad)
 
     train_loader, test_loader = get_all_dataset(config, tokenizer)
+    # train_loader, test_loader = get_dataset("dbpedia", config, tokenizer, add_task_id=True)
     print(len(train_loader), len(test_loader))
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
 

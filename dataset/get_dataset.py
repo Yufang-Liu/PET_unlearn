@@ -27,7 +27,15 @@ def get_dataset(dataset_str, config, tokenizer, add_task_id=False):
     else:
         dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
         train_set, test_set = dataset['train'], dataset['test']
-        print(len(train_set), len(test_set))
+        if config['options']['finetune']:
+            label_name = 'label' if dataset_str != 'yahoo' else "topic"
+            train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],
+                                        label_name, config['options']['finetune_nums'])
+            # test_indices = get_indices(test_set, config['data'][dataset_str + '_num_class'],
+            #                            label_name, config['options']['finetune_nums'])
+            train_set = train_set.select(train_indices)
+            # test_set = test_set.select(test_indices)
+        print("train set size is {}, test set size is {}".format(len(train_set), len(test_set)))
 
     if add_task_id:
         task_id = config['data']['multi_task'].index(dataset_str)
@@ -100,10 +108,11 @@ def get_all_dataset(config, tokenizer):
                 label_name = 'label' if dataset_str != 'yahoo' else "topic"
                 train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],
                                             label_name, config['options']['finetune_nums'])
-                test_indices = get_indices(test_set, config['data'][dataset_str + '_num_class'],
-                                           label_name, config['options']['finetune_nums'])
+                # test_indices = get_indices(test_set, config['data'][dataset_str + '_num_class'],
+                #                            label_name, config['options']['finetune_nums'])
                 train_set = train_set.select(train_indices)
-                test_set = test_set.select(test_indices)
+                # test_set = test_set.select(test_indices)
+                print("train set size is {}, test set size is {}".format(len(train_set), len(test_set)))
 
         train_set = train_set.add_column(name="task_id", column=[task_id]*len(train_set))
         test_set = test_set.add_column(name="task_id", column=[task_id]*len(test_set))
