@@ -154,6 +154,8 @@ def parse_argument():
                         help="dataset name in [yelp, dbpedia, amazon, agnews, yahoo]")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
+    parser.add_argument("--sample_size", type=int, default=2000,
+                        help="sample size for small dataset")
     parser.add_argument('--test_only', action="store_true", default=False,
                         help="whether to only test")
     parser.add_argument("-t", "--toml", type=str, action="append")

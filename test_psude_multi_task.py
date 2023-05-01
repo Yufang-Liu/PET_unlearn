@@ -39,6 +39,8 @@ def parse_argument():
                         help="whether to freeze the prefix")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
+    parser.add_argument("--sample_size", type=int, default=2000,
+                        help="sample size for small dataset")
     parser.add_argument('--finetune', action="store_true", default=False,
                         help="whether to use finetune set, sample 10 number for each class")
     parser.add_argument('--finetune_nums', type=int, default=10,

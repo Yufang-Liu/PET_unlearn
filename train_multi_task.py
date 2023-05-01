@@ -47,6 +47,8 @@ def parse_argument():
                         help="pretrained model file path")
     parser.add_argument('--sample_small', action="store_true", default=False,
                         help="whether to sample small dataset or not")
+    parser.add_argument("--sample_size", type=int, default=2000,
+                        help="sample size for small dataset")
     parser.add_argument('--finetune', action="store_true", default=False,
                         help="whether to use finetune set, sample 10 number for each class")
     parser.add_argument('--test_only', action="store_true", default=False,

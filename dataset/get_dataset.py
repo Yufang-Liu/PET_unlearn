@@ -25,7 +25,9 @@ def get_dataset(dataset_str, config, tokenizer, add_task_id=False):
         test_set = load_dataset(dataset_name, cache_dir=dataset_path,
                                 split='test')
     else:
-        dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
+        dataset = load_from_disk(dataset_path + '/small_'
+                                 + str(config['options']['sample_size'])
+                                 + '_' + dataset_name)
         train_set, test_set = dataset['train'], dataset['test']
         if config['options']['finetune']:
             label_name = 'label' if dataset_str != 'yahoo' else "topic"
@@ -100,7 +102,9 @@ def get_all_dataset(config, tokenizer):
             test_set = load_dataset(dataset_name, cache_dir=dataset_path,
                                     split='test')
         else:
-            dataset = load_from_disk(dataset_path + '/small_' + dataset_name)
+            dataset = load_from_disk(dataset_path + '/small_'
+                                     + str(config['options']['sample_size'])
+                                     + '_' + dataset_name)
             train_set, test_set = dataset['train'], dataset['test']
             if config['options']['finetune']:
                 if dataset_str == config['options']['unlearn_dataset_name']:

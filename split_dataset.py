@@ -82,8 +82,12 @@ def main():
     train_set = train_set.select(train_indices)
     test_set = test_set.select(test_indices)
     dataset = DatasetDict({"train": train_set, "test": test_set})
-    dataset.save_to_disk(dataset_path + '/small_' + dataset_name)
-    # ds = load_from_disk(dataset_path + '/small_' + dataset_name)
+    dataset.save_to_disk(dataset_path + '/small_'
+                         + str(config['options']['sample_size'])
+                         + '_' + dataset_name)
+    # ds = load_from_disk(dataset_path + '/small_'
+    #                     + str(config['options']['sample_size'])
+    #                     + '_' + dataset_name)
 
 
 if __name__ == '__main__':
