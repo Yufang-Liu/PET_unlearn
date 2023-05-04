@@ -14,6 +14,7 @@ from peft import (
     get_peft_model,
     PeftModel,
     PrefixTuningConfig,
+    LoraConfig
 )
 
 
@@ -210,6 +211,13 @@ def main():
                 peft_config = PrefixTuningConfig(
                     task_type="SEQ_CLS",
                     num_virtual_tokens=config['prefix']['prefix_num'])
+            elif config['prefix']['peft_type'] == 'lora':
+                peft_config = LoraConfig(
+                                task_type="SEQ_CLS",
+                                inference_mode=False,
+                                r=8, lora_alpha=32,
+                                lora_dropout=0.1
+                            )
             else:
                 print("error local_peft type !")
                 exit(0)

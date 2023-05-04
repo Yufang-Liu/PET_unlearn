@@ -29,7 +29,7 @@ def get_dataset(dataset_str, config, tokenizer, add_task_id=False):
                                  + str(config['options']['sample_size'])
                                  + '_' + dataset_name)
         train_set, test_set = dataset['train'], dataset['test']
-        if config['options']['finetune']:
+        if 'finetune' in config['options'].keys() and config['options']['finetune']:
             label_name = 'label' if dataset_str != 'yahoo' else "topic"
             train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],
                                         label_name, config['options']['finetune_nums'])
@@ -106,7 +106,7 @@ def get_all_dataset(config, tokenizer):
                                      + str(config['options']['sample_size'])
                                      + '_' + dataset_name)
             train_set, test_set = dataset['train'], dataset['test']
-            if config['options']['finetune']:
+            if 'finetune' in config['options'].keys() and config['options']['finetune']:
                 if dataset_str == config['options']['unlearn_dataset_name']:
                     continue
                 label_name = 'label' if dataset_str != 'yahoo' else "topic"

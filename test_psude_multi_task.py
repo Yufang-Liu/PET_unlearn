@@ -14,6 +14,7 @@ from dataset.get_dataset import get_all_dataset, get_dataset
 # from peft import PeftModel, PrefixTuningConfig, get_peft_model
 from local_peft.peft_model import PeftModel
 from local_peft.tuners.prefix_tuning import PrefixTuningConfig
+from local_peft.tuners.lora import LoraConfig
 from local_peft.mapping import get_peft_model
 
 
@@ -98,6 +99,13 @@ def main():
                 peft_config = PrefixTuningConfig(
                     task_type="SEQ_MT_CLS",
                     num_virtual_tokens=config['prefix']['prefix_num'])
+            elif config['prefix']['peft_type'] == 'lora':
+                peft_config = LoraConfig(
+                                task_type="SEQ_MT_CLS",
+                                inference_mode=False,
+                                r=8, lora_alpha=32,
+                                lora_dropout=0.1
+                            )
             else:
                 print("error local_peft type !")
                 exit(0)
@@ -119,16 +127,31 @@ def main():
             peft_config = PrefixTuningConfig(
                 task_type="SEQ_MT_CLS",
                 num_virtual_tokens=config['prefix']['prefix_num'])
+        elif config['prefix']['peft_type'] == 'lora':
+            peft_config = LoraConfig(
+                task_type="SEQ_MT_CLS",
+                inference_mode=False,
+                r=8, lora_alpha=32,
+                lora_dropout=0.1
+            )
         else:
-            print("error local_peft type !")
+            print("error peft type !")
             exit(0)
         model = get_peft_model(model, peft_config, config)
 
         if config['options']['prefix_dir']:
             adapter_model = torch.load(config['options']['prefix_dir'] + '/adapter_model.bin')
             state_dict = model.state_dict()
-            state_dict['prompt_encoder.embedding.weight'] = adapter_model['prompt_embeddings']
+            if config['prefix']['peft_type'] == 'prefix':
+                state_dict['prompt_encoder.embedding.weight'] = adapter_model['prompt_embeddings']
+            elif config['prefix']['peft_type'] == 'lora':
+                for k, v in state_dict.items():
+                    if "lora" in k:
+                        state_dict[k] = adapter_model[k]
+            else:
+                print("error peft type")
             model.load_state_dict(state_dict)
+
         if config['options']['finetune']:
             for n, p in model.named_parameters():
                 if "prompt_encoder" not in n and "classifier" not in n:

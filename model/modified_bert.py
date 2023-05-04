@@ -1623,10 +1623,10 @@ class BertForMultiTaskClassification(BertPreTrainedModel):
         self.config = config
 
         self.bert = BertModel(config)
-        classifier_dropout = (
-            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
-        )
-        self.dropout = nn.Dropout(classifier_dropout)
+        #classifier_dropout = (
+        #    config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        #)
+        #self.dropout = nn.Dropout(classifier_dropout)
 
         dataset_str_list = multi_task_config['data']['multi_task']
         self.classifier_list = nn.ModuleList([])
@@ -1688,7 +1688,7 @@ class BertForMultiTaskClassification(BertPreTrainedModel):
             attention_list.append(outputs.attentions)
             pooled_output = outputs[1]
 
-            pooled_output = self.dropout(pooled_output)
+            #pooled_output = self.dropout(pooled_output)
             task_logits = classifier(pooled_output).squeeze(-1)
             logits_list.append(task_logits)
             loss_fct = CrossEntropyLoss()
