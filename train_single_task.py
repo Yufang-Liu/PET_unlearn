@@ -135,6 +135,47 @@ def run_normal_training(config, device, model,
           .format(config['io']['best_model'], best_metric, best_epoch))
 
 
+def run_prefix_training(config, device, model,
+                        train_loader, test_loader, metric,
+                        optimizer, scheduler, num_epochs):
+    model.to(device)
+    best_metric, best_epoch = 0, 0
+    for epoch in range(num_epochs):
+        model.train()
+        for step, batch in enumerate(tqdm(train_loader)):
+            batch.to(device)
+            outputs = model(**batch)
+            loss = outputs.loss
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+
+        model.save_pretrained(config['io']['last_prefix_model'])
+
+        model.eval()
+        for step, batch in enumerate(tqdm(test_loader)):
+            batch.to(device)
+            with torch.no_grad():
+                outputs = model(**batch)
+            predictions = outputs.logits.argmax(dim=-1)
+            predictions, references = predictions, batch["labels"]
+            metric.add_batch(
+                predictions=predictions,
+                references=references,
+            )
+
+        eval_metric = metric.compute()
+
+        print(f"epoch {epoch}:", eval_metric)
+        if eval_metric['accuracy'] > best_metric:
+            best_metric, best_epoch = eval_metric['accuracy'], epoch
+            os.system(f'cp -r {config["io"]["last_prefix_model"]} {config["io"]["best_prefix_model"]}')
+
+    print("training finish, save models in {}, best metric is {} in epoch {}."
+          .format(config['io']['best_model'], best_metric, best_epoch))
+
+
 def parse_argument():
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", type=str, help="config file path",
@@ -159,6 +200,8 @@ def parse_argument():
                         help="sample size for small dataset")
     parser.add_argument('--test_only', action="store_true", default=False,
                         help="whether to only test")
+    parser.add_argument("--learning_type", type=str, default="unlearn",
+                        help="unlearn or learn")
     parser.add_argument("-t", "--toml", type=str, action="append")
     options = parser.parse_args()
     return options
@@ -226,10 +269,13 @@ def main():
                 for n, p in model.named_parameters():
                     if 'classifier' in n:
                         p.requires_grad = False
-            model.print_trainable_parameters()
-            print(model)
         else:
             model = PeftModel.from_pretrained(model, config['options']['prefix_dir'])
+
+    '''if config['options']['add_prefix'] and config['options']['learning_type'] == 'learn':
+        for n, p in model.named_parameters():
+            if "prompt_encoder" not in n and "classifier" not in n:
+                p.requires_grad = True'''
 
     tokenizer = AutoTokenizer.from_pretrained(config['model']['model_name'],
                                               cache_dir=config['model']['cache_dir'])
@@ -258,6 +304,13 @@ def main():
         print("test finish, test acc is {}".format(eval_metric['accuracy']))
         exit(0)
 
+    if config['options']['add_prefix']:
+        model.print_trainable_parameters()
+        print(model)
+    else:
+        for n, p in model.named_parameters():
+            print(n, p.requires_grad)
+
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
 
     # Instantiate scheduler
@@ -270,7 +323,7 @@ def main():
     if not config['options']['add_prefix']:
         run_normal_training(config, device, model, train_loader, test_loader, metric,
                             optimizer, scheduler, num_epochs)
-    else:
+    elif config['options']['add_prefix'] and config['options']['learning_type'] == 'unlearn':
         teacher_model = AutoModelForSequenceClassification.\
             from_pretrained(config['model']['model_name'],
                             return_dict=True,
@@ -279,6 +332,9 @@ def main():
         run_teacher_student_learning(config, device, model, teacher_model,
                                      train_loader, test_loader, metric,
                                      optimizer, scheduler, num_epochs)
+    elif config['options']['add_prefix'] and config['options']['learning_type'] == 'learn':
+        run_prefix_training(config, device, model, train_loader, test_loader, metric,
+                            optimizer, scheduler, num_epochs)
 
 
 if __name__ == '__main__':

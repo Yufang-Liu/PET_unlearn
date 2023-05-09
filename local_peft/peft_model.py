@@ -132,7 +132,8 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         from .mapping import MODEL_TYPE_TO_PEFT_MODEL_MAPPING, PEFT_TYPE_TO_CONFIG_MAPPING
 
         # load the config
-        peft_config = PEFT_TYPE_TO_CONFIG_MAPPING[PeftConfig.from_pretrained(model_id).peft_type].from_pretrained(model_id)
+        peft_config = PEFT_TYPE_TO_CONFIG_MAPPING[PeftConfig.from_pretrained(model_id).peft_type].from_pretrained(
+            model_id)
 
         if getattr(model, "hf_device_map", None) is not None:
             remove_hook_from_submodules(model)
@@ -359,15 +360,15 @@ class PeftModelForSequenceClassification(PeftModel):
         _set_trainable(self)
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -519,15 +520,18 @@ class PeftModelForMultiTaskClassification(PeftModel):
         _set_trainable(self)
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            distill_loss=False,
+            classfier_list=None,
+            unlearn_task_id=None,
+            **kwargs,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -561,8 +565,14 @@ class PeftModelForMultiTaskClassification(PeftModel):
             }
         )
 
-        if self.peft_config.peft_type == PeftType.PREFIX_TUNING:
+        if self.peft_config.peft_type == PeftType.PREFIX_TUNING and not distill_loss:
             return self._prefix_tuning_forward(input_ids=input_ids, **kwargs)
+        elif self.peft_config.peft_type == PeftType.PREFIX_TUNING:
+            return self._prefix_tuning_forward_distill(
+                input_ids=input_ids,
+                classfier_list=classfier_list,
+                unlearn_task_id=unlearn_task_id,
+                **kwargs)
         else:
             if kwargs.get("token_type_ids", None) is not None:
                 kwargs["token_type_ids"] = torch.cat(
@@ -664,7 +674,114 @@ class PeftModelForMultiTaskClassification(PeftModel):
                 prediction_list.append(prediction)
                 target_list.append(target)
 
-            #if not return_dict:
+            # if not return_dict:
+            #    output = (logits,) + outputs[2:]
+            #    return ((loss,) + output) if loss is not None else output
+            prediction = torch.cat(prediction_list)
+            targets = torch.cat(target_list)
+
+            return SequenceClassifierOutput(
+                loss=loss,
+                logits=logits_list,
+                hidden_states=hidden_states_list,
+                attentions=attention_list,
+            ), prediction, targets
+
+    def _prefix_tuning_forward_distill(
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            classfier_list=None,
+            unlearn_task_id=None,
+            **kwargs,
+    ):
+        batch_size = input_ids.shape[0]
+        past_key_values = self.get_prompt(batch_size)
+        fwd_params = list(inspect.signature(self.base_model.forward).parameters.keys())
+
+        kwargs.update(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "inputs_embeds": inputs_embeds,
+                "output_attentions": output_attentions,
+                "output_hidden_states": output_hidden_states,
+                "return_dict": return_dict,
+                "past_key_values": past_key_values,
+            }
+        )
+        if "past_key_values" in fwd_params:
+            return self.base_model(labels=labels, **kwargs)
+        else:
+            transformer_backbone_name = self.base_model.get_submodule(self.transformer_backbone_name)
+            fwd_params = list(inspect.signature(transformer_backbone_name.forward).parameters.keys())
+            if "past_key_values" not in fwd_params:
+                raise ValueError("Model does not support past key values which are required for prefix tuning.")
+            # outputs = transformer_backbone_name(**kwargs)
+            # !!!!! only change code for prefix-tuning right now
+            loss = 0
+            logits_list, hidden_states_list, attention_list = [], [], []
+            prediction_list, target_list = [], []
+            task_id = kwargs['task_id']
+            keys = kwargs.keys()
+
+            for idx, (classifier_name, random_classifier) in \
+                    enumerate(zip(self.cls_layer_name_list, classfier_list)):
+                classifier = self.base_model.get_submodule(classifier_name)
+                task_indice = task_id == idx
+                target = labels[task_indice]
+                task_past_key_values = []
+                task_idx_non_zero = torch.nonzero(task_indice).squeeze(-1)
+
+                for layer in range(len(past_key_values)):
+                    task_past_key_values.append(
+                        torch.index_select(past_key_values[layer], 1, task_idx_non_zero))
+
+                outputs = transformer_backbone_name(
+                    input_ids[task_indice],
+                    attention_mask=attention_mask[task_indice]
+                    if attention_mask is not None else None,
+                    token_type_ids=kwargs["token_type_ids"][task_indice]
+                    if "token_type_ids" in keys else None,
+                    position_ids=kwargs["position_ids"][task_indice]
+                    if "position_ids" in keys else None,
+                    head_mask=kwargs["head_mask"][task_indice]
+                    if "head_mask" in keys else None,
+                    inputs_embeds=inputs_embeds[task_indice]
+                    if inputs_embeds is not None else None,
+                    past_key_values=task_past_key_values,
+                    output_attentions=output_attentions,
+                    output_hidden_states=output_hidden_states,
+                    return_dict=return_dict,
+                )
+                hidden_states_list.append(outputs.hidden_states)
+                attention_list.append(outputs.attentions)
+                pooled_output = outputs[1] if len(outputs) > 1 else outputs[0]
+
+                if "dropout" in [name for name, _ in list(self.base_model.named_children())]:
+                    pooled_output = self.base_model.dropout(pooled_output)
+
+                task_logits = classifier(pooled_output).squeeze(-1)
+                logits_list.append(task_logits)
+                loss_fct = CrossEntropyLoss()
+                if idx != unlearn_task_id:
+                    loss += loss_fct(task_logits, target)
+                #else:
+                #    continue
+                else:
+                    random_target = random_classifier(pooled_output).squeeze(-1).detach()
+                    loss += loss_fct(task_logits, random_target)
+
+                prediction = torch.argmax(task_logits, dim=-1)
+                prediction_list.append(prediction)
+                target_list.append(target)
+
+            # if not return_dict:
             #    output = (logits,) + outputs[2:]
             #    return ((loss,) + output) if loss is not None else output
             prediction = torch.cat(prediction_list)
@@ -706,15 +823,15 @@ class PeftModelForCausalLM(PeftModel):
         self.base_model.prepare_inputs_for_generation = self.prepare_inputs_for_generation
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         if not isinstance(self.peft_config, PromptLearningConfig):
             return self.base_model(
@@ -840,18 +957,18 @@ class PeftModelForSeq2SeqLM(PeftModel):
         )
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        decoder_input_ids=None,
-        decoder_attention_mask=None,
-        decoder_inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         if not isinstance(self.peft_config, PromptLearningConfig):
             return self.base_model(
@@ -923,7 +1040,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
             elif self.peft_config.num_transformer_submodules == 2:
                 decoder_inputs_embeds = torch.cat(
-                    (prompts[:, self.peft_config.num_virtual_tokens :], decoder_inputs_embeds), dim=1
+                    (prompts[:, self.peft_config.num_virtual_tokens:], decoder_inputs_embeds), dim=1
                 )
                 return self.base_model(
                     inputs_embeds=inputs_embeds, decoder_inputs_embeds=decoder_inputs_embeds, **kwargs
@@ -997,15 +1114,15 @@ class PeftModelForTokenClassification(PeftModel):
         _set_trainable(self)
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1058,15 +1175,15 @@ class PeftModelForTokenClassification(PeftModel):
             return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
 
     def _prefix_tuning_forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_ids=None,
+            attention_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         batch_size = input_ids.shape[0]
         past_key_values = self.get_prompt(batch_size)

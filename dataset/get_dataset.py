@@ -77,7 +77,7 @@ def get_dataset(dataset_str, config, tokenizer, add_task_id=False):
     return train_dataloader, eval_dataloader
 
 
-def get_all_dataset(config, tokenizer):
+def get_all_dataset(config, tokenizer, no_unlearn=True):
     def tokenize_function(examples):
         # max_length=None => use the model max length (it's actually the default)
         outputs = tokenizer(examples[dataset_describe], truncation=True,
@@ -107,7 +107,7 @@ def get_all_dataset(config, tokenizer):
                                      + '_' + dataset_name)
             train_set, test_set = dataset['train'], dataset['test']
             if 'finetune' in config['options'].keys() and config['options']['finetune']:
-                if dataset_str == config['options']['unlearn_dataset_name']:
+                if dataset_str == config['options']['unlearn_dataset_name'] and no_unlearn:
                     continue
                 label_name = 'label' if dataset_str != 'yahoo' else "topic"
                 train_indices = get_indices(train_set, config['data'][dataset_str + '_num_class'],

@@ -26,30 +26,30 @@ def parse_argument():
                         default=666)
     parser.add_argument('--device', type=str, default="cuda",
                         help="cpu or cuda")
-    parser.add_argument('--add_prefix', action="store_true", default=False,
+    '''parser.add_argument('--add_prefix', action="store_true", default=False,
                         help="use pretrained prefix")
     parser.add_argument('--unlearn_dataset_name', type=str, default='dbpedia',
                         help="dataset name in [yelp, dbpedia, amazon, agnews, yahoo]")
+    parser.add_argument('--fix_prefix', action='store_true', default=False,
+                        help="whether to freeze the prefix")
     parser.add_argument('--prefix_dir', type=str, default=None,
-                        help="pretrained prefix directory")
+                        help="pretrained prefix directory")'''
     parser.add_argument('--load_from_pretrained', type=str, default=None,
                         help="pretrained model file path")
     parser.add_argument('--fix_classifier', action='store_true', default=False,
                         help="whether to freeze the task classifier or not")
-    parser.add_argument('--fix_prefix', action='store_true', default=False,
-                        help="whether to freeze the prefix")
-    parser.add_argument('--sample_small', action="store_true", default=False,
+    parser.add_argument('--sample_small', action="store_true", default=True,
                         help="whether to sample small dataset or not")
     parser.add_argument("--sample_size", type=int, default=2000,
                         help="sample size for small dataset")
     parser.add_argument('--finetune', action="store_true", default=False,
                         help="whether to use finetune set, sample 10 number for each class")
-    parser.add_argument('--finetune_distill', action="store_true", default=False,
-                        help="whether to use distill loss during fine-tuning")
     parser.add_argument('--finetune_nums', type=int, default=10,
                         help="number of each class")
     parser.add_argument('--test_only', action="store_true", default=False,
                         help="whether to only test")
+    parser.add_argument('--unlearn_dataset_name', type=str, default='dbpedia',
+                        help="dataset name in [yelp, dbpedia, amazon, agnews, yahoo]")
     parser.add_argument("-t", "--toml", type=str, action="append")
     options = parser.parse_args()
     return options
@@ -94,74 +94,9 @@ def main():
 
     if config['options']['load_from_pretrained']:
         ckpt = torch.load(config['options']['load_from_pretrained'])['model']
-        if list(ckpt.keys())[0].startswith('base_model'):
-            print("----load model with prefix----")
-            peft_config = None
-            if config['prefix']['peft_type'] == 'prefix':
-                peft_config = PrefixTuningConfig(
-                    task_type="SEQ_MT_CLS",
-                    num_virtual_tokens=config['prefix']['prefix_num'])
-            elif config['prefix']['peft_type'] == 'lora':
-                peft_config = LoraConfig(
-                                task_type="SEQ_MT_CLS",
-                                inference_mode=False,
-                                r=8, lora_alpha=32,
-                                lora_dropout=0.1
-                            )
-            else:
-                print("error local_peft type !")
-                exit(0)
-            model = get_peft_model(model, peft_config, config)
-            new_ckpt = model.state_dict()
-            for k1, k2 in zip(new_ckpt.keys(), ckpt.keys()):
-                assert k1 == k2
-                new_ckpt[k1] = ckpt[k2]
-            model.load_state_dict(new_ckpt)
-        else:
-            model.load_state_dict(ckpt)
+        model.load_state_dict(ckpt)
         print("load from fine-tuned model, path is {}".
               format(config['options']['load_from_pretrained']))
-
-    if config['options']['add_prefix']:
-        print("---------add prefix-----------")
-        peft_config = None
-        if config['prefix']['peft_type'] == 'prefix':
-            peft_config = PrefixTuningConfig(
-                task_type="SEQ_MT_CLS",
-                num_virtual_tokens=config['prefix']['prefix_num'])
-        elif config['prefix']['peft_type'] == 'lora':
-            peft_config = LoraConfig(
-                task_type="SEQ_MT_CLS",
-                inference_mode=False,
-                r=8, lora_alpha=32,
-                lora_dropout=0.1
-            )
-        else:
-            print("error peft type !")
-            exit(0)
-        model = get_peft_model(model, peft_config, config)
-
-        if config['options']['prefix_dir']:
-            adapter_model = torch.load(config['options']['prefix_dir'] + '/adapter_model.bin')
-            state_dict = model.state_dict()
-            if config['prefix']['peft_type'] == 'prefix':
-                state_dict['prompt_encoder.embedding.weight'] = adapter_model['prompt_embeddings']
-            elif config['prefix']['peft_type'] == 'lora':
-                for k, v in state_dict.items():
-                    if "lora" in k:
-                        state_dict[k] = adapter_model[k]
-            else:
-                print("error peft type")
-            model.load_state_dict(state_dict)
-
-        if config['options']['finetune']:
-            for n, p in model.named_parameters():
-                if "prompt_encoder" not in n and "classifier" not in n:
-                    p.requires_grad = True
-        if config['options']['fix_prefix']:
-            for n, p in model.named_parameters():
-                if "prompt_encoder" in n:
-                    p.requires_grad = False
 
     if config['options']['fix_classifier']:
         for n, p in model.named_parameters():
@@ -195,16 +130,7 @@ def main():
             print("{} test finish, test acc is {}".format(dataset_str, eval_metric['accuracy']))
         exit(0)
 
-    if config['options']['add_prefix']:
-        model.print_trainable_parameters()
-        print(model)
-    else:
-        for n, p in model.named_parameters():
-            print(n, p.requires_grad)
-
-    train_loader, test_loader = get_all_dataset(
-        config, tokenizer,
-        no_unlearn=not config['options']['finetune_distill'])
+    train_loader, test_loader = get_all_dataset(config, tokenizer, no_unlearn=False)
     # train_loader, test_loader = get_dataset("dbpedia", config, tokenizer, add_task_id=True)
     print(len(train_loader), len(test_loader))
     optimizer = AdamW(params=model.parameters(), lr=config['optim']['lr'])
@@ -215,37 +141,32 @@ def main():
         num_warmup_steps=0.06 * (len(train_loader) * num_epochs),
         num_training_steps=(len(train_loader) * num_epochs),
     )
-    if config['options']['finetune_distill']:
-        classifier_list = []
-        unlearn_task_id = 0
-        for idx, dataset_str in enumerate(config['data']['multi_task']):
-            if config['options']['unlearn_dataset_name'] == dataset_str:
-                unlearn_task_id = idx
-            classifier_list.append(
-                torch.nn.Linear(config['model']['hidden_dim'],
-                                config['data'][dataset_str + '_num_class'],
-                                device=config['options']['device'])
-            )
-        print("unlearn task id {}".format(unlearn_task_id))
+
+    classifier_list = []
+    unlearn_task_id = 0
+    for idx, dataset_str in enumerate(config['data']['multi_task']):
+        if config['options']['unlearn_dataset_name'] == dataset_str:
+            unlearn_task_id = idx
+        classifier_list.append(
+            torch.nn.Linear(config['model']['hidden_dim'],
+                            config['data'][dataset_str + '_num_class'],
+                            device=config['options']['device'])
+        )
 
     best_metric, best_epoch = 0, 0
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(tqdm(train_loader)):
             batch.to(device)
-            if not config['options']['finetune_distill']:
-                loss = model(**batch)[0].loss
-            else:
-                loss = model(
-                    input_ids=batch['input_ids'],
-                    token_type_ids=batch['token_type_ids'],
-                    attention_mask=batch['attention_mask'],
-                    labels=batch['labels'],
-                    task_id=batch['task_id'],
-                    distill_loss=True,
-                    classfier_list=classifier_list,
-                    unlearn_task_id=unlearn_task_id
-                )[0].loss
+            loss = model.distill_forward(
+                input_ids=batch['input_ids'],
+                token_type_ids=batch['token_type_ids'],
+                attention_mask=batch['attention_mask'],
+                labels=batch['labels'],
+                task_id=batch['task_id'],
+                classfier_list=classifier_list,
+                unlearn_task_id=unlearn_task_id
+            )[0].loss
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -280,9 +201,8 @@ def main():
     print("training finish, save models in {}, best metric is {} in epoch {}."
           .format(config['io']['best_model'], best_metric, best_epoch))
 
-
     model.eval()
-    if config['options']['prefix_dir'] and config['options']['unlearn_dataset_name']:
+    if config['options']['unlearn_dataset_name']:
         print("begin test other datasets after unlearn {}".
               format(config['options']['unlearn_dataset_name']))
     else:
